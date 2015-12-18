@@ -1,3 +1,4 @@
+import sys
 import copy
 import boto
 import boto.ec2.cloudwatch
@@ -6,34 +7,68 @@ import arrow
 class Fetcher(object):
     def __init__(self,config):
         self.config = config
-        self.aws_config = self.config['aws']
+        #self.aws_config = self.config['aws']
         self.metrics_config = self.config['metrics']
 
-    def __call__(self):
+    def __call__(self, start_time=None, end_time=None):
         c = self._connect()
         metrics = self.metrics_config['metrics']
+        #start = arrow.get('2015-12-18 03:00:00')
+        #end   = arrow.get('2015-12-18 03:40:00')
+        start = arrow.get(start_time)
+        end   = arrow.get(end_time)
+        spans = []
+
+        for r in arrow.Arrow.span_range('hour', start, end):
+            spans.append(r)
+        if len(spans) > 2:
+            #remove the head and end element
+            spans.pop(0)
+            spans.pop()
+        spans.append(self._ceil_floor(start, 'ceil'))
+        spans.append(self._ceil_floor(end, 'floor'))
+        spans = list(set(spans))
+        #print spans
+        #print len(spans)
+        #sys.exit()
+
         for metric in metrics:
-            metric_result = self._fetch_metric(c,metric)
-            self._print_metric(metric_result,metric)
+            for span in spans:
+                metric_result = self._fetch_metric(c,metric,span[0],span[1])
+                self._print_metric(metric_result,metric)
+
+    def _ceil_floor(self,date_point,which):
+        if which == 'ceil':
+            ceil = date_point.ceil('hour')
+            return (date_point.datetime, ceil.datetime)
+        elif which == 'floor':
+            floor =  date_point.floor('hour')
+            return (floor.datetime,date_point.datetime)
+        else:
+            return
 
     def _connect(self):
-        aws = self.aws_config
-        aws_access_key_id = aws['aws_access_key_id']
-        aws_secret_access_key = aws['aws_secret_access_key']
-        region = aws['region']
+        #aws = self.aws_config
+        #aws_access_key_id = aws['aws_access_key_id']
+        #aws_secret_access_key = aws['aws_secret_access_key']
+        #region = aws['region']
+        region = 'us-east-1'
 
-        c = boto.ec2.cloudwatch.connect_to_region(region,
-                        aws_access_key_id=aws_access_key_id,
-                        aws_secret_access_key=aws_secret_access_key)
+        #c = boto.ec2.cloudwatch.connect_to_region(region,
+        #                aws_access_key_id=aws_access_key_id,
+        #                aws_secret_access_key=aws_secret_access_key)
+        c = boto.ec2.cloudwatch.connect_to_region(region)
+
         return c
 
-    def _fetch_metric(self,conn,metric_config):
+    def _fetch_metric(self,conn,metric_config,start_time=None,end_time=None):
         period = 60
 
         interval = 11
         utc_now = arrow.utcnow()
-        start_time = utc_now.replace(minutes=-interval).datetime
-        end_time = utc_now.datetime
+        if not start_time and not end_time:
+            start_time = utc_now.replace(minutes=-interval).datetime
+            end_time = utc_now.datetime
 
         metric_name = metric_config["MetricName"]
         namespace = metric_config["Namespace"]
@@ -72,7 +107,8 @@ class Fetcher(object):
         if "carbonNameSpacePrefix" in self.metrics_config:
             metric_name.append(self.metrics_config["carbonNameSpacePrefix"])
         metric_name.append(metric_config["Namespace"].replace("/","."))
-        metric_name.append(self.aws_config['region'])
+        #metric_name.append(self.aws_config['region'])
+        metric_name.append('us-east-1')
         for name,value in metric_config["Dimensions"].iteritems():
             metric_name.append(value)
         metric_name.append(metric_config["MetricName"])
